@@ -1,0 +1,77 @@
+# O namespace, o Gateway (bgt3-gw) e a LoadBalancerConfiguration são recursos
+# COMPARTILHADOS: este chart não os cria, apenas anexa a rota ao Gateway existente.
+namespace: production
+
+image:
+  # Confirmar o nome do repositório ECR com quem provisiona o ECR.
+  repository: 388465176512.dkr.ecr.us-east-1.amazonaws.com/wrench/billing-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+# Com o gateway de pagamento MOCK o estado simulado vive em memória: mantenha 1 réplica
+# e o autoscaling desligado. Ao trocar para o Mercado Pago real (stateless) pode habilitar.
+replicas: 1
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60
+
+gateway:
+  name: bgt3-gw
+  # Quando preenchido, a rota é anexada ao listener HTTPS (mesma regra do os-service).
+  certificateArn: ''
+
+httpRoute:
+  hostname: api.bgt3.com.br
+  # /orcamento: decisão do cliente; /pagamento: consulta e webhook público do Mercado Pago.
+  pathPrefixes:
+    - /api/v1/orcamento
+    - /api/v1/pagamento
+
+serviceAccount:
+  create: true
+  name: wrench-billing-sa
+  # Role IRSA com permissão em SNS e SQS. Passar via --set no CI.
+  roleArn: ''
+
+# Banco próprio do serviço (RDS compartilhado, database e role exclusivos do Billing).
+database:
+  host: prod-db.bgt3.com.br
+  port: 5432
+  name: wrench_billing
+  # Role de menor privilégio criado por terraform/ (ver terraform/README.md). Passar via --set.
+  user: ''
+  password: ''
+
+# Mensageria (SNS + SQS)
+messaging:
+  region: us-east-1
+  # Vazio em produção; use apenas com LocalStack.
+  serviceUrl: ''
+
+pagamento:
+  expiracaoPixMinutos: 30
+  reconciliacaoIntervaloSegundos: 30
+  # Segredo do webhook (equivalente ao do Mercado Pago). Passar via --set.
+  webhookSecret: ''
+  mock:
+    # Força a recusa do estorno para demonstrar a falha da compensação (EstornoFalhou).
+    falharEstorno: false
+
+simulacao:
+  # Nunca habilitar em produção: expõe /api/v1/simulacao para simular o resultado do pagamento.
+  habilitada: false
+
+# Obrigatório no deploy (--set jwt.secret=...). Deve ser o mesmo segredo que assina os tokens
+# emitidos pela Lambda de autenticação.
+jwt:
+  secret: ''
+  issuer: Wrench Auto Repair
+  audience: Wrench Auto Repair

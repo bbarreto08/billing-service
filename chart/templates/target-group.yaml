@@ -1,0 +1,10 @@
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: wrench-billing-tg
+  namespace: {{ .Values.namespace }}
+spec:
+  targetReference:
+    name: wrench-billing-svc
+  defaultConfiguration:
+    targetType: ip

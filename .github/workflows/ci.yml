@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test com cobertura
+        run: >
+          dotnet test --no-build -c Release
+          --collect:"XPlat Code Coverage"
+          --settings tests/wrench.billing.tests/coverage.runsettings
+
+      - name: Verificar cobertura mínima (80%)
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          reportgenerator "-reports:tests/**/coverage.cobertura.xml" "-targetdir:coverage-report" "-reporttypes:TextSummary"
+          cat coverage-report/Summary.txt
+          COBERTURA=$(grep -oP 'Line coverage: \K[0-9.]+' coverage-report/Summary.txt)
+          awk -v c="$COBERTURA" 'BEGIN { if (c < 80) { print "Cobertura " c "% abaixo de 80%"; exit 1 } }'
+
+      - name: Validar chart Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm lint chart --set jwt.secret=ci --set database.user=ci --set database.password=ci

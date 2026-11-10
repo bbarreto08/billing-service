@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wrench-billing-deployment
+  namespace: {{ .Values.namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: wrench-billing
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: wrench-billing
+      annotations:
+        # Reinicia os pods quando os segredos mudam.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: wrench-billing-container
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.containerPort }}
+          envFrom:
+            - secretRef:
+                name: wrench-billing-config
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            - name: Database__MigrateOnStartup
+              value: "true"
+            - name: Messaging__Transport
+              value: Sqs
+            - name: Messaging__Region
+              value: {{ .Values.messaging.region | quote }}
+            - name: Messaging__ServiceUrl
+              value: {{ .Values.messaging.serviceUrl | quote }}
+            - name: Pagamento__ExpiracaoPixMinutos
+              value: {{ .Values.pagamento.expiracaoPixMinutos | quote }}
+            - name: Pagamento__ReconciliacaoIntervaloSegundos
+              value: {{ .Values.pagamento.reconciliacaoIntervaloSegundos | quote }}
+            - name: Pagamento__Mock__FalharEstorno
+              value: {{ .Values.pagamento.mock.falharEstorno | quote }}
+            - name: Simulacao__Habilitada
+              value: {{ .Values.simulacao.habilitada | quote }}
+            - name: Simulacao__WebhookBaseUrl
+              value: "http://localhost:{{ .Values.containerPort }}"
+          resources:
+            requests:
+              memory: {{ .Values.resources.requests.memory | quote }}
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.containerPort }}
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.containerPort }}
+            periodSeconds: 30
+            timeoutSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.containerPort }}
+            periodSeconds: 30
+            timeoutSeconds: 15

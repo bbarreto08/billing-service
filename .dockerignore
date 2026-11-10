@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/TestResults/
+coverage-report/
+tests/
+chart/
+terraform/
+.git/
+.github/
+*.md

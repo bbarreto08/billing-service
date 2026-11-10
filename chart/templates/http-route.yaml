@@ -1,0 +1,27 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wrench-billing-route
+  namespace: {{ .Values.namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      {{- if .Values.gateway.certificateArn }}
+      sectionName: https
+      {{- end }}
+  hostnames: ['{{ .Values.httpRoute.hostname }}']
+  rules:
+    - matches:
+        {{- range .Values.httpRoute.pathPrefixes }}
+        - path:
+            type: PathPrefix
+            value: {{ . }}
+        {{- end }}
+        {{- if .Values.simulacao.habilitada }}
+        - path:
+            type: PathPrefix
+            value: /api/v1/simulacao
+        {{- end }}
+      backendRefs:
+        - name: wrench-billing-svc
+          port: {{ .Values.containerPort }}

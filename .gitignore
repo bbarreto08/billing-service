@@ -1,0 +1,38 @@
+# Build
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+
+# IDE / usuário
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.rsuser
+
+# Testes e cobertura
+TestResults/
+coverage-report/
+*.coverage
+*.coveragexml
+
+# Segredos e ambiente local
+.env
+.env.*
+appsettings.Local.json
+secrets.json
+
+# Terraform (o .terraform.lock.hcl deve ser versionado)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Sistema
+Thumbs.db
+.DS_Store
