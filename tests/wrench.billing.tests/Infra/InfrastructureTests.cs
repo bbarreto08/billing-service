@@ -1,6 +1,7 @@
 using wrench.billing.application;
 using wrench.billing.application.Abstractions;
 using wrench.billing.infra;
+using wrench.billing.infra.Mensageria;
 using wrench.billing.infra.Pagamentos;
 using wrench.billing.infra.Persistence;
 using wrench.billing.tests.Support;
@@ -48,6 +49,67 @@ public class InfrastructureTests
         Assert.NotNull(provider.GetRequiredService<IBusControl>());
         Assert.IsType<MockPagamentoGateway>(provider.GetRequiredService<IPagamentoGateway>());
         Assert.DoesNotContain(provider.GetServices<IHostedService>(), s => s is PagamentoReconciliacaoWorker);
+    }
+
+    private static Dictionary<string, string?> ConfigSqs(Dictionary<string, string?>? extra = null)
+    {
+        var config = new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Billing"] = "Host=localhost;Database=wrench_billing;Username=u;Password=p",
+            ["Messaging:Transport"] = "Sqs",
+            ["Messaging:Region"] = "us-east-1",
+            ["Messaging:ServiceUrl"] = "http://localhost:4566",
+            ["Pagamento:ReconciliacaoHabilitada"] = "false"
+        };
+        foreach (var (chave, valor) in extra ?? [])
+            config[chave] = valor;
+        return config;
+    }
+
+    private static string? TopicoPublicacao<T>(ServiceProvider provider) where T : class
+        => provider.GetRequiredService<IBus>().Topology.TryGetPublishAddress<T>(out var endereco)
+            ? endereco.Segments.Last().Replace("topic:", "")
+            : null;
+
+    [Fact]
+    public async Task Topologia_PadraoPublicaTodosOsEventosNoTopicoDoBilling()
+    {
+        await using var provider = Montar(ConfigSqs());
+
+        Assert.Equal(MensageriaOptions.TopicoEventosPadrao, TopicoPublicacao<OrcamentoGerado>(provider));
+        Assert.Equal(MensageriaOptions.TopicoEventosPadrao, TopicoPublicacao<OrcamentoAprovado>(provider));
+        Assert.Equal(MensageriaOptions.TopicoEventosPadrao, TopicoPublicacao<PagamentoConfirmado>(provider));
+        Assert.Equal(MensageriaOptions.TopicoEventosPadrao, TopicoPublicacao<PagamentoEstornado>(provider));
+        Assert.Equal(MensageriaOptions.TopicoEventosPadrao, TopicoPublicacao<EstornoFalhou>(provider));
+    }
+
+    [Fact]
+    public async Task Topologia_NomesSaoConfiguraveis()
+    {
+        await using var provider = Montar(ConfigSqs(new()
+        {
+            ["Messaging:TopicoEventos"] = "outro-topico-de-eventos",
+            ["Messaging:TopicoComandos"] = "outro-topico-de-comandos"
+        }));
+
+        Assert.Equal("outro-topico-de-eventos", TopicoPublicacao<PagamentoFalhou>(provider));
+        Assert.Equal("outro-topico-de-comandos", TopicoPublicacao<GerarOrcamento>(provider));
+    }
+
+    [Fact]
+    public async Task Topologia_ValorVazioMantemUmTopicoPorTipoDoMassTransit()
+    {
+        await using var provider = Montar(ConfigSqs(new()
+        {
+            ["Messaging:TopicoEventos"] = "",
+            ["Messaging:TopicoComandos"] = ""
+        }));
+
+        var topico = TopicoPublicacao<OrcamentoGerado>(provider);
+
+        Assert.NotNull(topico);
+        Assert.NotEqual(MensageriaOptions.TopicoEventosPadrao, topico);
+        Assert.Contains("OrcamentoGerado", topico);
     }
 
     [Fact]

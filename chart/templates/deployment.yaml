@@ -44,6 +44,12 @@ spec:
               value: {{ .Values.messaging.region | quote }}
             - name: Messaging__ServiceUrl
               value: {{ .Values.messaging.serviceUrl | quote }}
+            - name: Messaging__TopicoEventos
+              value: {{ .Values.messaging.topicoEventos | quote }}
+            - name: Messaging__TopicoComandos
+              value: {{ .Values.messaging.topicoComandos | quote }}
+            - name: Messaging__PrefixoFilas
+              value: {{ .Values.messaging.prefixoFilas | quote }}
             - name: Pagamento__ExpiracaoPixMinutos
               value: {{ .Values.pagamento.expiracaoPixMinutos | quote }}
             - name: Pagamento__ReconciliacaoIntervaloSegundos

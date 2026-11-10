@@ -122,6 +122,26 @@ Erros: `401` token ou assinatura inválidos, `403` perfil sem permissão, `404` 
 > (incluindo o webhook público) para este serviço. O `{id}` do orçamento é gerado aqui e chega ao OS Service no
 > evento `OrcamentoGerado`.
 
+## Topologia de mensagens (nomes configuráveis)
+
+Os nomes de tópicos e filas **não estão fixos no código**: dependem de como a plataforma provisiona o SNS/SQS
+(Terraform do Thiago) e ainda não foram confirmados. O Billing adota uma **suposição** baseada no plano da Fase 4
+(um tópico por publicador, uma fila com DLQ por consumidor, MassTransit 8.x) e expõe tudo em configuração,
+então ajustar é trocar valores, sem recompilar:
+
+| Configuração | Padrão (suposição) | Efeito |
+|---|---|---|
+| `Messaging:TopicoEventos` | `wrench-billing-events` | Todos os eventos publicados pelo Billing vão para este tópico |
+| `Messaging:TopicoComandos` | `wrench-os-events` | Tópico ao qual as filas do Billing se inscrevem para receber `GerarOrcamento`, `CancelarOrcamento` e `EstornarPagamento` |
+| `Messaging:PrefixoFilas` | `billing` | Prefixo das filas de consumo (`billing-gerar-orcamento`, `billing-cancelar-orcamento`, `billing-estornar-pagamento`) |
+
+- **Valor vazio** em `TopicoEventos` ou `TopicoComandos` volta ao padrão do MassTransit: um tópico por tipo de mensagem.
+- No Kubernetes os valores vêm do chart (`messaging.topicoEventos`, `messaging.topicoComandos`, `messaging.prefixoFilas`).
+- **A outra ponta precisa usar os mesmos nomes.** O OS Service deve publicar os comandos no `TopicoComandos` e se inscrever
+  no `TopicoEventos`; idealmente esses nomes ficam no pacote `Wrench.Contracts`.
+- O código está em `src/wrench.billing.infra/Mensageria/MensageriaTopologia.cs`, com testes em `Infra/InfrastructureTests.cs`.
+- A IAM do IRSA precisa permitir publicar nesses tópicos e consumir/inscrever essas filas; a DLQ de cada fila é provisionada fora deste repositório.
+
 ## Modelo de dados (PostgreSQL)
 
 Migration `Inicial` em `src/wrench.billing.infra/Persistence/Migrations`: `orcamentos`, `orcamento_itens`,
@@ -145,6 +165,9 @@ Variáveis de ambiente usam `__` (ex.: `Pagamento__WebhookSecret`).
 | `Database:UseInMemory` | Banco em memória (testes) |
 | `Messaging:Transport` | `Sqs` ou `InMemory` |
 | `Messaging:Region` / `Messaging:ServiceUrl` | Região AWS / endpoint (LocalStack) |
+| `Messaging:TopicoEventos` | Tópico SNS onde o Billing publica **todos** os seus eventos (padrão `wrench-billing-events`) |
+| `Messaging:TopicoComandos` | Tópico SNS do qual consome os comandos do orquestrador (padrão `wrench-os-events`) |
+| `Messaging:PrefixoFilas` | Prefixo das filas SQS, uma por consumer (padrão `billing`, ex.: `billing-gerar-orcamento`) |
 | `Pagamento:WebhookSecret` | Segredo da validação do `x-signature` |
 | `Pagamento:ExpiracaoPixMinutos` | Validade do Pix (padrão 30) |
 | `Pagamento:ReconciliacaoIntervaloSegundos` | Intervalo da conciliação (padrão 30) |
@@ -205,6 +228,7 @@ Falta a parte de SonarCloud, imagem no ECR e deploy no EKS, que dependem do work
 - Pipeline completa (SonarCloud, ECR, deploy Helm): depende do workflow reutilizável do Thiago.
 - Observabilidade: falta instrumentar OpenTelemetry e Serilog como no `execucao-service` (traces para o New Relic,
   com `traceparent` nas mensagens).
+- **Nomes de tópicos e filas**: valores padrão são suposição (ver "Topologia de mensagens"); confirmar com o Thiago e o João Paulo.
 - **Formato de mensagem entre serviços**: o `execucao-service` publica JSON puro no SNS (atributos `messageId`, `tipo`,
   `correlationId`, `traceparent`), enquanto este serviço usa o envelope do MassTransit. É preciso decidir com o grupo
   um único formato e a topologia de tópicos (um por publicador, segundo o plano) antes da integração.

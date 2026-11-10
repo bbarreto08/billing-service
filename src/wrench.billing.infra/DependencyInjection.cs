@@ -3,6 +3,7 @@ using Amazon.SQS;
 using wrench.billing.application;
 using wrench.billing.application.Abstractions;
 using wrench.billing.application.Consumers;
+using wrench.billing.infra.Mensageria;
 using wrench.billing.domain;
 using wrench.billing.infra.Notificacoes;
 using wrench.billing.infra.Pagamentos;
@@ -106,7 +107,14 @@ public static class DependencyInjection
                     r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(2));
                 });
 
-                cfg.ConfigureEndpoints(context, new KebabCaseEndpointNameFormatter("billing", false));
+                // Nomes de tópicos e filas vêm da configuração (Messaging:*), pois dependem de como a
+                // plataforma provisiona o SNS/SQS. Ver "Topologia de mensagens" no README.
+                var topologia = configuration.GetSection(MensageriaOptions.Secao).Get<MensageriaOptions>()
+                                ?? new MensageriaOptions();
+                MensageriaTopologia.Aplicar(cfg, topologia);
+
+                cfg.ConfigureEndpoints(context, new KebabCaseEndpointNameFormatter(
+                    string.IsNullOrWhiteSpace(topologia.PrefixoFilas) ? null : topologia.PrefixoFilas.Trim(), false));
             });
         });
     }

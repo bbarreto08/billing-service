@@ -55,6 +55,11 @@ messaging:
   region: us-east-1
   # Vazio em produção; use apenas com LocalStack.
   serviceUrl: ''
+  # Topologia SNS/SQS: SUPOSIÇÃO do Billing a partir do plano da Fase 4; confirmar com quem provisiona
+  # a mensageria. Valor vazio mantém o padrão do MassTransit (um tópico por tipo de mensagem).
+  topicoEventos: wrench-billing-events   # onde o Billing publica todos os seus eventos
+  topicoComandos: wrench-os-events       # de onde o Billing consome os comandos do orquestrador
+  prefixoFilas: billing                  # prefixo das filas (ex.: billing-gerar-orcamento)
 
 pagamento:
   expiracaoPixMinutos: 30
