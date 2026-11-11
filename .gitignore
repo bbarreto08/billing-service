@@ -36,3 +36,6 @@ crash.log
 # Sistema
 Thumbs.db
 .DS_Store
+
+# Gerado pelo Reqnroll a partir dos .feature (recriado no build)
+*.feature.cs
