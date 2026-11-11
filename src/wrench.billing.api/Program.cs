@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
+using Serilog;
 using wrench.billing.api.Configuration;
 using wrench.billing.api.Controllers;
 using wrench.billing.api.Middlewares;
@@ -14,8 +15,11 @@ using wrench.billing.infra.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.ConfigureSerilog();
+
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
+builder.Services.AddObservability(builder.Configuration, builder.Environment);
 
 builder.Services.Configure<SimulacaoOptions>(builder.Configuration.GetSection(SimulacaoOptions.Secao));
 builder.Services.ConfigureAuthentication(builder.Configuration);
@@ -54,6 +58,8 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
         await db.Database.EnsureCreatedAsync();
 }
 
+app.UseCorrelationId();
+app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 
 app.MapOpenApi();

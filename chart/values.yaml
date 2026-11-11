@@ -80,3 +80,9 @@ jwt:
   secret: ''
   issuer: Wrench Auto Repair
   audience: Wrench Auto Repair
+
+# licenseKey vazio = a aplicação não exporta telemetria (sem quebrar o deploy).
+newRelic:
+  otlpEndpoint: https://otlp.nr-data.net:4318
+  otlpProtocol: http/protobuf
+  licenseKey: '

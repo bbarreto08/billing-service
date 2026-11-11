@@ -33,6 +33,8 @@ spec:
           envFrom:
             - secretRef:
                 name: wrench-billing-config
+            - secretRef:
+                name: wrench-billing-newrelic
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production

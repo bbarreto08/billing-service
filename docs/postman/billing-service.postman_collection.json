@@ -1,0 +1,173 @@
+{
+  "info": {
+    "name": "Wrench Billing Service",
+    "description": "# Wrench Billing Service\n\nOrçamento, aprovação, pagamento (Pix) e estorno das ordens de serviço. Faz parte da Saga orquestrada pelo OS Service.\n\n> **Pagamento mockado.** O Mercado Pago está atrás de `IPagamentoGateway` e hoje é um mock. Os requests de **Simulação** só funcionam com `Simulacao:Habilitada=true` (docker compose e homologação) e **nunca** em produção.\n\n## Variáveis\n\n| Variável | Descrição |\n| --- | --- |\n| `baseUrl` | Host. Com `docker compose up`: `http://localhost:8082`. |\n| `version` | Versão da API na URL (`api/v{version}/...`). |\n| `tokenCliente` | JWT com perfil **Cliente** (aprovar/recusar). Emitido pela lambda de autenticação. |\n| `tokenAdmin` | JWT com perfil **Admin** ou **Funcionario** (simulação). |\n| `webhookSecret` | Mesmo valor de `Pagamento:WebhookSecret` do serviço (usado para assinar o webhook). |\n| `ordemServicoId` | Id da OS. O orçamento é criado pela Saga (mensagem `GerarOrcamento`), não por HTTP. |\n| `orcamentoId` | Preenchido por **GET Orçamento da OS**. |\n| `externalId` | Id da cobrança no provedor. Preenchido por **PUT Aprovar**. |\n\n## Roteiro do fluxo completo\n\n1. Defina `ordemServicoId` (o orçamento já deve existir: a Saga publica `GerarOrcamento`).\n2. **Orçamento → GET Orçamento da OS** (guarda `orcamentoId`).\n3. **Orçamento → PUT Aprovar** (cliente; guarda `externalId` e devolve o Pix).\n4. **Simulação → POST Simular pagamento aprovado** (admin) ou **Pagamento → POST Webhook** (assinado).\n5. **Pagamento → GET Pagamento do orçamento** deve mostrar `Aprovado`.\n\nFluxos de falha: use `recusado` ou `expirado` na simulação (o orçamento é cancelado e a Saga recebe `PagamentoFalhou`), ou **PUT Recusar** no lugar do passo 3.\n\n## Erros\n\n`401` token ou assinatura inválidos · `403` perfil sem permissão · `404` não encontrado (ou simulação desabilitada) · `409` transição de estado inválida.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [ { "key": "token", "value": "{{tokenCliente}}", "type": "string" } ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8082", "description": "Host do serviço." },
+    { "key": "version", "value": "1", "description": "Versão da API." },
+    { "key": "tokenCliente", "value": "", "description": "JWT com perfil Cliente." },
+    { "key": "tokenAdmin", "value": "", "description": "JWT com perfil Admin ou Funcionario." },
+    { "key": "webhookSecret", "value": "segredo-webhook-somente-dev", "description": "Pagamento:WebhookSecret do serviço (valor do docker compose)." },
+    { "key": "ordemServicoId", "value": "00000000-0000-0000-0000-000000000001", "description": "Id da ordem de serviço." },
+    { "key": "orcamentoId", "value": "", "description": "Preenchido por GET Orçamento da OS." },
+    { "key": "externalId", "value": "", "description": "Preenchido por PUT Aprovar." }
+  ],
+  "item": [
+    {
+      "name": "Orçamento",
+      "description": "Consulta e decisão do cliente. `aprovar` e `recusar` são exclusivos do perfil **Cliente**.",
+      "item": [
+        {
+          "name": "GET Orçamento da OS",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const orc = pm.response.json();",
+            "pm.collectionVariables.set('orcamentoId', orc.id);"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/orcamento/ordem-servico/{{ordemServicoId}}", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "orcamento", "ordem-servico", "{{ordemServicoId}}" ] },
+            "description": "Orçamento mais recente da OS. **Perfis:** Admin, Funcionario, Cliente.\n\nGuarda o `id` em `orcamentoId`. Retorna `404` se a Saga ainda não gerou o orçamento."
+          }
+        },
+        {
+          "name": "GET Orçamento por id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/orcamento/{{orcamentoId}}", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "orcamento", "{{orcamentoId}}" ] },
+            "description": "Consulta um orçamento (valor total, itens, status). **Perfis:** Admin, Funcionario, Cliente."
+          }
+        },
+        {
+          "name": "PUT Aprovar",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const pagamento = pm.response.json();",
+            "pm.collectionVariables.set('externalId', pagamento.externalId);",
+            "pm.test('Pix pendente', () => pm.expect(pagamento.status).to.eql('Pendente'));"
+          ] } } ],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/orcamento/{{orcamentoId}}/aprovar", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "orcamento", "{{orcamentoId}}", "aprovar" ] },
+            "description": "Aprova o orçamento e devolve a cobrança Pix (`pixCopiaECola`, `expiraEm`). **Perfil:** Cliente.\n\nPublica `OrcamentoAprovado`. Repetir a chamada devolve a mesma cobrança (idempotente). `409` se o orçamento já foi recusado ou cancelado."
+          }
+        },
+        {
+          "name": "PUT Recusar",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"motivoRecusa\": \"Valor acima do esperado\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/orcamento/{{orcamentoId}}/recusar", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "orcamento", "{{orcamentoId}}", "recusar" ] },
+            "description": "Recusa o orçamento (corpo opcional). **Perfil:** Cliente.\n\nPublica `OrcamentoRecusado`; a Saga cancela a OS e envia `CancelarOrcamento`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pagamento",
+      "description": "Consulta do Pix e webhook do provedor.",
+      "item": [
+        {
+          "name": "GET Pagamento do orçamento",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/pagamento/orcamento/{{orcamentoId}}", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "pagamento", "orcamento", "{{orcamentoId}}" ] },
+            "description": "Status do pagamento (`Pendente`, `Aprovado`, `Recusado`, `Expirado`, `Cancelado`, `Estornado`) e o Pix. **Perfis:** Admin, Funcionario, Cliente."
+          }
+        },
+        {
+          "name": "POST Webhook (assinado)",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "// Reproduz a assinatura do Mercado Pago: HMAC-SHA256 de \"id:<data.id>;request-id:<x-request-id>;ts:<ts>;\".",
+              "const secret = pm.collectionVariables.get('webhookSecret');",
+              "let dataId = pm.collectionVariables.get('externalId');",
+              "if (/^[a-z0-9]+$/i.test(dataId)) { dataId = dataId.toLowerCase(); }",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const requestId = pm.variables.replaceIn('{{$guid}}');",
+              "const manifesto = `id:${dataId};request-id:${requestId};ts:${ts};`;",
+              "const v1 = CryptoJS.HmacSHA256(manifesto, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'x-request-id', value: requestId });",
+              "pm.request.headers.upsert({ key: 'x-signature', value: `ts=${ts},v1=${v1}` });"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Webhook aceito (200)', () => pm.response.to.have.status(200));"
+            ] } }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"payment.updated\",\n  \"type\": \"payment\",\n  \"data\": { \"id\": \"{{externalId}}\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/pagamento/webhook?data.id={{externalId}}&type=payment", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "pagamento", "webhook" ], "query": [ { "key": "data.id", "value": "{{externalId}}" }, { "key": "type", "value": "payment" } ] },
+            "description": "Endpoint **público** chamado pelo Mercado Pago. A autenticidade vem do header `x-signature`, calculado pelo script de pré-request com `webhookSecret`.\n\nO serviço **consulta o status no provedor**, então para ver a mudança de estado use antes a simulação (que define o resultado no mock). Sem assinatura válida retorna `401`. Reenviar a mesma notificação tem efeito único."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Simulação (somente mock)",
+      "description": "Define o resultado do pagamento no mock e dispara o MESMO webhook público, com assinatura válida. Exige perfil **Admin** ou **Funcionario** e `Simulacao:Habilitada=true`; caso contrário retorna `404`.",
+      "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tokenAdmin}}", "type": "string" } ] },
+      "item": [
+        {
+          "name": "POST Simular pagamento aprovado",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Webhook processado', () => pm.expect(pm.response.json().webhookStatus).to.eql(200));"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/simulacao/pagamentos/{{orcamentoId}}/aprovado", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "simulacao", "pagamentos", "{{orcamentoId}}", "aprovado" ] },
+            "description": "Orçamento fica `Pago` e a Saga recebe `PagamentoConfirmado`."
+          }
+        },
+        {
+          "name": "POST Simular pagamento recusado",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/simulacao/pagamentos/{{orcamentoId}}/recusado", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "simulacao", "pagamentos", "{{orcamentoId}}", "recusado" ] },
+            "description": "Pagamento `Recusado`, orçamento `Cancelado` e a Saga recebe `PagamentoFalhou`."
+          }
+        },
+        {
+          "name": "POST Simular pagamento expirado",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v{{version}}/simulacao/pagamentos/{{orcamentoId}}/expirado", "host": [ "{{baseUrl}}" ], "path": [ "api", "v{{version}}", "simulacao", "pagamentos", "{{orcamentoId}}", "expirado" ] },
+            "description": "Pagamento `Expirado`, orçamento `Cancelado` e a Saga recebe `PagamentoFalhou`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Saúde",
+      "description": "Probes usados pelo Kubernetes. Públicos.",
+      "auth": { "type": "noauth" },
+      "item": [
+        {
+          "name": "GET Liveness",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/health", "host": [ "{{baseUrl}}" ], "path": [ "health" ] }, "description": "O processo está de pé." }
+        },
+        {
+          "name": "GET Readiness",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/health/ready", "host": [ "{{baseUrl}}" ], "path": [ "health", "ready" ] }, "description": "Pronto para receber tráfego (inclui o banco)." }
+        }
+      ]
+    }
+  ]
+}

@@ -22,7 +22,8 @@ src/
   wrench.billing.infra         EF Core + Npgsql, outbox/inbox, MassTransit + SQS, gateway mock, worker
   wrench.billing.api           Controllers, Models, Options, Configuration, Middlewares, Program.cs
 tests/
-  wrench.billing.tests         xUnit (Api, Application, Domain, Infra, Support) + coverage.runsettings
+  wrench.billing.tests         xUnit (Api, Application, Domain, Infra, Support) + BDD Reqnroll (Bdd/) + coverage.runsettings
+docs/postman/                  collection Postman do serviço
 chart/                         chart Helm (wrench-billing)
 terraform/                     database e role do Billing no RDS (ver terraform/README.md)
 ```
@@ -102,7 +103,9 @@ sequenceDiagram
 
 ## API (`/api/v1`)
 
-Documentação interativa em `/docs-ui` e especificação em `/openapi/v1.json`. Versionamento pela URL.
+Documentação interativa em `/docs-ui`, especificação em `/openapi/v1.json` e collection Postman em
+[`docs/postman/billing-service.postman_collection.json`](docs/postman/billing-service.postman_collection.json)
+(inclui o webhook com assinatura calculada por script). Versionamento pela URL.
 
 | Método | Rota | Perfis | Descrição |
 |---|---|---|---|
@@ -142,6 +145,22 @@ então ajustar é trocar valores, sem recompilar:
 - O código está em `src/wrench.billing.infra/Mensageria/MensageriaTopologia.cs`, com testes em `Infra/InfrastructureTests.cs`.
 - A IAM do IRSA precisa permitir publicar nesses tópicos e consumir/inscrever essas filas; a DLQ de cada fila é provisionada fora deste repositório.
 
+## Observabilidade
+
+Mesmo padrão do `execucao-service` (OpenTelemetry + Serilog, destino New Relic via OTLP):
+
+- **Logs** em JSON no console (`RenderedCompactJsonFormatter`) com `service.name`, `deployment.environment`, `trace_id`/`span_id`
+  e `CorrelationId`; também enviados por OTLP quando `OTEL_EXPORTER_OTLP_ENDPOINT` está definido.
+- **Traces e métricas** de ASP.NET Core, HttpClient e runtime, mais a fonte/medidor `MassTransit`, que cria os spans de
+  publish/consume e propaga o contexto (`traceparent`) nas mensagens para ligar HTTP e Saga no mesmo trace.
+- **`X-Correlation-ID`** por requisição HTTP: reaproveitado se enviado, gerado se não, devolvido no response e incluído nos logs.
+  É independente do `correlationId` da Saga, que viaja nas mensagens.
+- `/health*` fica fora dos traces.
+- No Kubernetes as credenciais vêm do Secret `wrench-billing-newrelic` (chart: `newRelic.licenseKey`); sem a chave a telemetria
+  fica desligada (`OTEL_SDK_DISABLED=true`) e o deploy não quebra.
+
+> Ainda **não validado** em ambiente real: o envio ao New Relic e a continuidade do trace pelo SQS dependem da homologação.
+
 ## Modelo de dados (PostgreSQL)
 
 Migration `Inicial` em `src/wrench.billing.infra/Persistence/Migrations`: `orcamentos`, `orcamento_itens`,
@@ -174,6 +193,8 @@ Variáveis de ambiente usam `__` (ex.: `Pagamento__WebhookSecret`).
 | `Pagamento:Mock:FalharEstorno` | Força `EstornoFalhou` (demonstração) |
 | `Simulacao:Habilitada` | Expõe `/api/v1/simulacao` (nunca em produção) |
 | `Simulacao:WebhookBaseUrl` | Endereço pelo qual a simulação chama o webhook do próprio serviço |
+| `Observability:ServiceName` | Nome do serviço nos traces e logs (padrão `wrench-billing-api`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `_PROTOCOL` / `_HEADERS` | Destino OTLP (New Relic). Sem endpoint o serviço instrumenta, mas não exporta |
 | `JwtOptions:Secret/Issuer/Audience` | Mesmos valores do OS Service e da lambda de autenticação (a aplicação não sobe sem eles) |
 
 Credenciais AWS vêm do IRSA no EKS (sem chaves estáticas). Segredos nunca entram no repositório.
@@ -198,10 +219,26 @@ dotnet test --collect:"XPlat Code Coverage" --settings tests/wrench.billing.test
 reportgenerator "-reports:tests/**/coverage.cobertura.xml" "-targetdir:coverage-report" "-reporttypes:TextSummary;Html"
 ```
 
-Resultado atual: 119 testes e cerca de 99% de cobertura de linhas (a exigência é 80%). O `coverage.runsettings` exclui
+Resultado atual: 150 testes e cerca de 99% de cobertura de linhas (a exigência é 80%). O `coverage.runsettings` exclui
 apenas `Program.cs`, migrations e código gerado, e é obrigatório passá-lo com `--settings` (sem ele as migrations entram
-na conta). Os testes cobrem domínio, serviços, consumers, assinatura do webhook, gateway mock, DI, worker, propagação do
-`correlationId` e a API inteira via `WebApplicationFactory`, com banco e barramento em memória.
+na conta). Os testes cobrem domínio, serviços, consumers, assinatura do webhook, gateway mock, DI e topologia, worker,
+propagação do `correlationId`, observabilidade e a API inteira via `WebApplicationFactory`, com banco e barramento em memória.
+
+### BDD (Reqnroll)
+
+O fluxo completo está especificado em português em
+[`tests/wrench.billing.tests/Bdd/Features/OrcamentoPagamentoEstorno.feature`](tests/wrench.billing.tests/Bdd/Features/OrcamentoPagamentoEstorno.feature)
+e roda junto com os demais testes (`dotnet test`). São 10 cenários sobre os serviços reais, com banco em memória, gateway
+mock e um publisher que registra os eventos:
+
+- fluxo completo até o pagamento confirmado;
+- **estorno** quando a execução não aceita a OS, estorno recusado pelo provedor e pedido de estorno repetido (sem devolver duas vezes);
+- recusa do cliente seguida do cancelamento da Saga, pagamento recusado e Pix expirado;
+- notificação duplicada do provedor com efeito único;
+- orçamento já pago que não pode ser cancelado (só estornado) e orçamento com dados inválidos.
+
+Os passos ficam em `Bdd/Steps/FluxoSteps.cs` e o estado do cenário em `Bdd/Support/FluxoContexto.cs`. O BDD exercita a
+Saga dentro do Billing; o fluxo entre os três serviços só pode ser validado em homologação.
 
 ## Deploy
 
@@ -215,7 +252,8 @@ helm upgrade --install wrench-billing ./chart -n production `
   --set database.user=<role> --set database.password=<senha> `
   --set pagamento.webhookSecret=<segredo> `
   --set jwt.secret=<segredo> `
-  --set serviceAccount.roleArn=<role-irsa-sns-sqs>
+  --set serviceAccount.roleArn=<role-irsa-sns-sqs> `
+  --set newRelic.licenseKey=<chave-opcional>
 ```
 
 O chart mantém **1 réplica** e o autoscaling desligado enquanto o gateway for o mock, porque o estado simulado fica em memória.
@@ -226,8 +264,6 @@ Falta a parte de SonarCloud, imagem no ECR e deploy no EKS, que dependem do work
 ## Pendências conhecidas
 
 - Pipeline completa (SonarCloud, ECR, deploy Helm): depende do workflow reutilizável do Thiago.
-- Observabilidade: falta instrumentar OpenTelemetry e Serilog como no `execucao-service` (traces para o New Relic,
-  com `traceparent` nas mensagens).
 - **Nomes de tópicos e filas**: valores padrão são suposição (ver "Topologia de mensagens"); confirmar com o Thiago e o João Paulo.
 - **Formato de mensagem entre serviços**: o `execucao-service` publica JSON puro no SNS (atributos `messageId`, `tipo`,
   `correlationId`, `traceparent`), enquanto este serviço usa o envelope do MassTransit. É preciso decidir com o grupo
@@ -235,5 +271,6 @@ Falta a parte de SonarCloud, imagem no ECR e deploy no EKS, que dependem do work
 - Contratos locais: trocar por `Wrench.Contracts` v1 e alinhar nomes e campos com os demais serviços.
 - E-mail do orçamento: o `LogOrcamentoNotificador` só registra o envio; a troca por Amazon SES é uma nova
   implementação de `IOrcamentoNotificador`.
-- BDD do fluxo completo (Reqnroll), incluindo o cenário de estorno.
+- Collection Postman validada apenas como JSON e conferida com as rotas; ainda não foi importada e executada no Postman.
+- Observabilidade e trace distribuído (Billing → SQS → OS Service) a validar no New Relic em homologação.
 - `docker build` e `helm lint` ainda não foram executados neste ambiente (sem daemon Docker e sem Helm instalados).
