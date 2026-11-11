@@ -273,4 +273,6 @@ Falta a parte de SonarCloud, imagem no ECR e deploy no EKS, que dependem do work
   implementação de `IOrcamentoNotificador`.
 - Collection Postman validada apenas como JSON e conferida com as rotas; ainda não foi importada e executada no Postman.
 - Observabilidade e trace distribuído (Billing → SQS → OS Service) a validar no New Relic em homologação.
-- `docker build` e `helm lint` ainda não foram executados neste ambiente (sem daemon Docker e sem Helm instalados).
+- Validado localmente (Docker 29, Helm 3.22): `docker build`, `docker compose up` com Postgres real (migrations aplicadas, `/health/ready` 200,
+  aprovar → simulação → webhook assinado → orçamento `Pago`, 403 por perfil e 401 sem assinatura) e `helm lint`/`helm template`.
+  Ainda **não** foi exercitado com SNS/SQS reais nem no EKS.
