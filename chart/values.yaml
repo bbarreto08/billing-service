@@ -85,4 +85,4 @@ jwt:
 newRelic:
   otlpEndpoint: https://otlp.nr-data.net:4318
   otlpProtocol: http/protobuf
-  licenseKey: '
+  licenseKey: ''
